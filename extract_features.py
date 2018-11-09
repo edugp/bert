@@ -397,7 +397,7 @@ def main(_):
       all_features = []
       for (i, token) in enumerate(feature.tokens):
         if FLAGS.only_cls_features and token != '[CLS]':
-            break
+          break
         all_layers = []
         for (j, layer_index) in enumerate(layer_indexes):
           layer_output = result["layer_output_%d" % j]
