@@ -646,7 +646,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
         predictions = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.metrics.accuracy(label_ids, predictions)
         loss = tf.metrics.mean(per_example_loss)
-        auc = tf.metrics.auc(tf.nn.softmax(logits), predictions)
+        auc = tf.metrics.auc(tf.nn.softmax(logits).toarray()[:, 1], predictions)
         precision = tf.metrics.precision(label_ids, predictions)
         recall = tf.metrics.recall(label_ids, predictions)
         return {
