@@ -99,7 +99,7 @@ flags.DEFINE_bool("use_tpu", False, "Whether to use TPU or GPU/CPU.")
 
 tf.flags.DEFINE_string(
     "tpu_name", None,
-    "The Cloud TPU to use for training. This should be either the name "
+    "The Cloud TPU to use for training. Thiwritins should be either the name "
     "used when creating the Cloud TPU, or a grpc://ip.address.of.tpu:8470 "
     "url.")
 
@@ -582,9 +582,68 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
     return (loss, per_example_loss, logits, probabilities)
 
 
+def create_model_hidden(bert_config, is_training, input_ids, input_mask, segment_ids,
+                 labels, num_labels, use_one_hot_embeddings):
+  """Creates a classification model."""
+  model = modeling.BertModel(
+      config=bert_config,
+      is_training=is_training,
+      input_ids=input_ids,
+      input_mask=input_mask,
+      token_type_ids=segment_ids,
+      use_one_hot_embeddings=use_one_hot_embeddings)
+
+  # In the demo, we are doing a simple classification task on the entire
+  # segment.
+  #
+  # If you want to use the token-level output, use model.get_sequence_output()
+  # instead.
+  output_layer = model.get_pooled_output()
+
+  hidden_size = output_layer.shape[-1].value
+
+  hidden_weights = tf.get_variable(
+      "hidden_weights", [hidden_size, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+  hidden_bias = tf.get_variable(
+      "hidden_bias", [hidden_size], initializer=tf.zeros_initializer())
+
+  output_weights = tf.get_variable(
+      "output_weights", [num_labels, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+  output_bias = tf.get_variable(
+      "output_bias", [num_labels], initializer=tf.zeros_initializer())
+
+  with tf.variable_scope("loss"):
+    if is_training:
+      # I.e., 0.1 dropout
+      output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
+
+    hidden_layer = tf.matmul(output_layer, hidden_weights, transpose_b=True)
+    hidden_layer = tf.nn.bias_add(hidden_layer, hidden_bias)
+    hidden_layer = tf.nn.relu(hidden_layer)
+    if is_training:
+        # I.e., 0.1 dropout
+        hidden_layer = tf.nn.dropout(hidden_layer, keep_prob=0.9)
+
+    logits = tf.matmul(hidden_layer, output_weights, transpose_b=True)
+    logits = tf.nn.bias_add(logits, output_bias)
+    probabilities = tf.nn.softmax(logits, axis=-1)
+    log_probs = tf.nn.log_softmax(logits, axis=-1)
+
+    one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+
+    per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
+    loss = tf.reduce_mean(per_example_loss)
+
+    return (loss, per_example_loss, logits, probabilities)
+
+
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings):
+                     use_one_hot_embeddings, add_hidden=False):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -601,9 +660,14 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-    (total_loss, per_example_loss, logits, probabilities) = create_model(
-        bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
-        num_labels, use_one_hot_embeddings)
+    if add_hidden:
+      (total_loss, per_example_loss, logits, probabilities) = create_model_hidden(
+          bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
+          num_labels, use_one_hot_embeddings)
+    else:
+      (total_loss, per_example_loss, logits, probabilities) = create_model(
+          bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
+          num_labels, use_one_hot_embeddings)
 
     tvars = tf.trainable_variables()
 
@@ -753,6 +817,7 @@ def main(_):
       "mnli": MnliProcessor,
       "mrpc": MrpcProcessor,
       "xnli": XnliProcessor,
+      "ubuntu": MrpcProcessor,
   }
 
   if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict:
@@ -806,6 +871,10 @@ def main(_):
         len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
 
+  # For the ubuntu dialogue corpus v2 task, we want to add an extra layer
+  add_hidden = True if task_name == "ubuntu" else False
+  tf.logging.info("Add hidden layer: %s", str(add_hidden))
+
   model_fn = model_fn_builder(
       bert_config=bert_config,
       num_labels=len(label_list),
@@ -814,7 +883,8 @@ def main(_):
       num_train_steps=num_train_steps,
       num_warmup_steps=num_warmup_steps,
       use_tpu=FLAGS.use_tpu,
-      use_one_hot_embeddings=FLAGS.use_tpu)
+      use_one_hot_embeddings=FLAGS.use_tpu,
+      add_hidden=add_hidden)
 
   # If TPU is not available, this will fall back to normal Estimator on CPU
   # or GPU.

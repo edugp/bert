@@ -79,7 +79,12 @@ flags.DEFINE_bool(
 
 flags.DEFINE_bool(
     "only_cls_features", False,
+<<<<<<< HEAD
     "If True, only the features for the CLS tokens will be returned")
+=======
+    "If True, only the features for the CLS tokens will be extracted")
+
+>>>>>>> extract_only_cls_features
 
 class InputExample(object):
 
@@ -396,7 +401,7 @@ def main(_):
       all_features = []
       for (i, token) in enumerate(feature.tokens):
         if FLAGS.only_cls_features and token != '[CLS]':
-            break
+          break
         all_layers = []
         for (j, layer_index) in enumerate(layer_indexes):
           layer_output = result["layer_output_%d" % j]
